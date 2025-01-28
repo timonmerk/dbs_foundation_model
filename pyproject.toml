@@ -1,0 +1,18 @@
+[project]
+name = "dbs-foundation-model"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "joblib>=1.4.2",
+    "matplotlib>=3.10.0",
+    "numpy>=2.2.2",
+    "pandas>=2.2.3",
+    "pyarrow>=19.0.0",
+    "scikit-learn>=1.6.1",
+    "scipy>=1.15.1",
+    "tensorboard>=2.18.0",
+    "torch>=2.5.1",
+    "tqdm>=4.67.1",
+]

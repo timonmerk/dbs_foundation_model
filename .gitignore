@@ -169,3 +169,9 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+runs/*
+models_save/*
+models_save_downstream/*
+embs/*
+.DS_Store
