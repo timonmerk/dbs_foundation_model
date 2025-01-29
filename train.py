@@ -27,7 +27,7 @@ def get_fooof_fit(data):
     data_ = data.reshape(-1, data.shape[2])
 
     fg = FOOOFGroup()
-    fg.verbose = True
+    fg.verbose = False
     freqs = np.arange(0, 126, 1)
     
     fg.fit(freqs, 10**(data_[:, :]), freq_range=[65, 120])
@@ -38,27 +38,36 @@ def get_fooof_fit(data):
     ap_spec = offsets[:, np.newaxis] - np.log10(freqs[np.newaxis, 1:] ** exponents[:, np.newaxis])
     spec_wo_ac = data_[:, 1:] - ap_spec
 
-    from matplotlib import pyplot as plt
-    plt.figure()
-    plt.plot(freqs[1:], data_[0, 1:], label="Original")
-    plt.plot(freqs[1:], ap_spec[0, :], label="Aperiodic")
-    #plt.plot(freqs[1:], spec_wo_ac[0, :], label="Without Aperiodic")
-    plt.show(block=True)
-
-    plt.figure()
-    plt.subplot(121)
-    plt.imshow(data_, aspect="auto")
-    plt.subplot(122)
-    plt.imshow(ap_spec, aspect="auto")
-    plt.show(block=True)
-
-    avg_power = []
-    for band in [[1, 3], [4, 8], [8, 12], [13, 20], [20, 35], [60, 80], [90, 124]]:
+    res_ = []
+    res_.append(offsets)
+    res_.append(exponents)
+    for band in [[1, 3], [4, 8], [8, 12], [13, 20], [20, 35], [36, 58], [62, 80], [81, 124]]:
         idx_band = np.where((freqs >= band[0]) & (freqs <= band[1]))[0]
-        avg_power.append(np.mean(spec_wo_ac[:, idx_band], axis=1))
+        res_.append(np.mean(spec_wo_ac[:, idx_band], axis=1))
 
+    DEBUG_ = False
+    if DEBUG_:
+        from matplotlib import pyplot as plt
+        plt.figure()
+        plt.plot(freqs[1:], data_[0, 1:], label="Original")
+        plt.plot(freqs[1:], ap_spec[0, :], label="Aperiodic")
+        #plt.plot(freqs[1:], spec_wo_ac[0, :], label="Without Aperiodic")
+        plt.show(block=True)
 
-    return 
+        plt.figure()
+        plt.subplot(121)
+        plt.imshow(data_.T, aspect="auto")
+        plt.title("Original")
+        # flip y axis
+        plt.gca().invert_yaxis()
+        plt.subplot(122)
+        plt.imshow(ap_spec.T, aspect="auto")
+        plt.gca().invert_yaxis()
+        plt.title("Aperiodic")
+        plt.show(block=True)
+
+    return np.array(res_).T
+
 
 def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
           pretrain: bool, subs_val: list, classification: bool = False):
@@ -103,7 +112,6 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
     for epoch in range(args.num_epochs):
 
         train_loss = 0
-
         for idx, (data, label) in enumerate(data_iter_train):
             data = torch.tensor(data, dtype=torch.float32).to(args.device)
             bat_size, seq_len, seg_len, ch_num = data.shape
@@ -124,12 +132,18 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
             data_enc = data_enc.reshape(bat_size, seq_len, ch_num, args.d_model)
             cls_token_embs = cls_token_embs.reshape(bat_size, args.num_cls_token, ch_num, args.d_model)
 
-            #get_fooof_fit(data_true_mask.detach().cpu().numpy())
-
             if pretrain:
                 data_pred = linear(data_enc)
                 data_pred = torch.transpose(data_pred, 2, 3)
-                bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
+
+                if args.pretrain_fooof:
+                    true_fooof = get_fooof_fit(data_true_mask.clone().detach().cpu().numpy())
+                    pred_fooof = get_fooof_fit(data_pred[:, mask, :, :].clone().detach().cpu().numpy())
+                    true_fooof = torch.from_numpy(true_fooof).float().to(args.device).requires_grad_()
+                    pred_fooof = torch.from_numpy(pred_fooof).float().to(args.device).requires_grad_()
+                    bat_loss = loss(pred_fooof, true_fooof)
+                else:
+                    bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
             else:
                 if classification:
                     class_counts = label.sum(axis=0)
@@ -205,7 +219,16 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                 if pretrain: 
                     data_pred = linear(data_enc)
                     data_pred = torch.transpose(data_pred, 2, 3)
-                    bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
+
+                    if args.pretrain_fooof:
+                        true_fooof = get_fooof_fit(data_true_mask.detach().cpu().numpy())
+                        pred_fooof = get_fooof_fit(data_pred[:, mask, :, :].detach().cpu().numpy())
+                        true_fooof = torch.tensor(true_fooof, dtype=torch.float32).to(args.device)
+                        pred_fooof = torch.tensor(pred_fooof, dtype=torch.float32).to(args.device)
+                        bat_loss = loss(pred_fooof, true_fooof)
+                    else:
+                        bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
+
                 else:
                     cls_token_embs = cls_token_embs.reshape(bat_size, args.num_cls_token * ch_num * args.d_model)
                     data_pred = downstream(cls_token_embs)
@@ -366,7 +389,8 @@ if __name__ == "__main__":
     parser.add_argument("--seg_len", type=int, default=126)  # frequency bins
     parser.add_argument("--seq_len", type=int, default=15)
     parser.add_argument("--patience", type=int, default=50)
-    parser.add_argument("--pretrain_loss", type=str, default="mse", choices=["mse", "mae"])
+    parser.add_argument("--pretrain_loss", type=str, default="mae", choices=["mse", "mae"])
+    parser.add_argument("--pretrain_fooof", type=bool, default=False)
     parser.add_argument("--load_pretrained", type=bool, default=True)
     parser.add_argument("--use_rotary_encoding", type=bool, default=False)
     parser.add_argument("--num_cls_token", type=int, default=1)
