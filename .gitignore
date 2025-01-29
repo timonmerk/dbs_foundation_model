@@ -175,3 +175,4 @@ models_save/*
 models_save_downstream/*
 embs/*
 .DS_Store
+out_save/*
