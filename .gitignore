@@ -176,3 +176,7 @@ models_save_downstream/*
 embs/*
 .DS_Store
 out_save/*
+out_*
+data/*
+logs/
+out*
