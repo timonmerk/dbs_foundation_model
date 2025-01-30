@@ -3,6 +3,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
+from torchmetrics.regression import PearsonCorrCoef
 import random
 import math
 import argparse
@@ -81,14 +82,11 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
 
         optimizer = torch.optim.AdamW(list(encoder.parameters()) + list(linear.parameters()), lr=args.lr, betas=(0.9, 0.95))
     else:
-        optimizer = torch.optim.AdamW(list(encoder.parameters()) + list(downstream.parameters()), lr=args.lr, betas=(0.9, 0.95))
-        if classification: 
-            loss = nn.BCEWithLogitsLoss()
+        if args.downstream_loss == "corr":
+            maximize_ = True
         else:
-            if args.pretrain_loss == "mse":
-                loss = nn.MSELoss()  # take some regression loss as pretrain loss
-            else:
-                loss = nn.L1Loss()
+            maximize_ = False
+        optimizer = torch.optim.AdamW(list(encoder.parameters()) + list(downstream.parameters()), lr=args.lr, betas=(0.9, 0.95), maximize=maximize_)
 
     subs = pd.read_csv(os.path.join(args.PATH_DATA, "all_label_series.csv"))["sub"].unique()
     subs_train = [sub for sub in subs if sub not in subs_val]
@@ -117,6 +115,12 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
             bat_size, seq_len, seg_len, ch_num = data.shape
             label = torch.tensor(label, dtype=torch.float32)[:, :3].to(args.device)  # bk, dk, tremor, h
 
+            if args.downstream_label == "pkg_bk":
+                label = label[:, 0]
+            elif args.downstream_label == "pkg_dk":
+                label = label[:, 1]
+            elif args.downstream_label == "pkg_tremor":
+                label = label[:, 2]
             if pretrain:
                 # set randomly 3 out of 15 time points to zero
                 mask = torch.rand(data.shape[1]) < 0.3
@@ -152,15 +156,30 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                     else:
                         weights = 1/(class_counts / label.shape[0])
                     loss = nn.BCEWithLogitsLoss(pos_weight=weights.to(args.device))
-                else:
-                    if args.pretrain_loss == "mse":
+                else:  # downstream
+                    if args.downstream_loss == "mse":
                         loss = nn.MSELoss()
-                    else:
+                    elif args.downstream_loss == "mae":
                         loss = nn.L1Loss()
-            
+                    else:
+                        loss = PearsonCorrCoef()
+
                 cls_token_embs = cls_token_embs.reshape(bat_size, args.num_cls_token * ch_num * args.d_model)
                 data_pred = torch.squeeze(downstream(cls_token_embs))
-                bat_loss = loss(data_pred, label)
+                if args.downstream_label == "all" and type(loss) == PearsonCorrCoef:
+                    bat_loss_bk = loss(data_pred[:, 0], label[:, 0])
+                    bat_loss_dk = loss(data_pred[:, 1], label[:, 1])
+                    bat_loss_tremor = loss(data_pred[:, 2], label[:, 2])
+                    
+                    losses = torch.tensor([bat_loss_bk, bat_loss_dk, bat_loss_tremor]).requires_grad_(True)
+                    valid_losses = losses[~torch.isnan(losses)]
+
+                    if valid_losses.numel() > 0:  # Check if there are valid values
+                        bat_loss = valid_losses.mean()
+                    else:
+                        bat_loss = torch.tensor(0.0).requires_grad_(True)
+                else:
+                    bat_loss = loss(data_pred, label)
 
                 y_train_pred.append(data_pred.detach().cpu().numpy())
                 y_train_true.append(label.detach().cpu().numpy())
@@ -183,7 +202,7 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
         logging.info(f"Epoch: {epoch}, Train Loss: {train_loss}")
 
         if not pretrain:
-            _ = utils.report_tb_res(y_train_pred, y_train_true, epoch, writer, classification=classification, train_=True)
+            _ = utils.report_tb_res(args, y_train_pred, y_train_true, epoch, writer, classification=classification, train_=True)
 
         #if epoch % 2 != 0:  # validation every 2 epochs
         #    continue
@@ -199,6 +218,14 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
             for idx, (data, label) in enumerate(data_iter_val):
                 data = torch.tensor(data, dtype=torch.float32).to(args.device)
                 label = torch.tensor(label, dtype=torch.float32)[:, :3].to(args.device)
+
+                if args.downstream_label == "pkg_bk":
+                    label = label[:, 0]
+                elif args.downstream_label == "pkg_dk":
+                    label = label[:, 1]
+                elif args.downstream_label == "pkg_tremor":
+                    label = label[:, 2]
+
                 bat_size, seq_len, seg_len, ch_num = data.shape
 
                 if pretrain:
@@ -229,9 +256,9 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                     else:
                         bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
 
-                else:
+                else:  # downstream
                     cls_token_embs = cls_token_embs.reshape(bat_size, args.num_cls_token * ch_num * args.d_model)
-                    data_pred = downstream(cls_token_embs)
+                    data_pred = torch.squeeze(downstream(cls_token_embs))
 
                     if classification:
                         class_counts = label.sum(axis=0)
@@ -241,19 +268,34 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                             weights = 1/(class_counts / label.shape[0])
                         loss = nn.BCEWithLogitsLoss(pos_weight=weights.to(args.device))
                     else:
-                        if args.pretrain_loss == "mse":
+                        if args.downstream_loss == "mse":
                             loss = nn.MSELoss()
-                        else:
+                        elif args.downstream_loss == "mae":
                             loss = nn.L1Loss()
+                        else:
+                            loss = PearsonCorrCoef()
     
-                    bat_loss = loss(data_pred, label)
+                    if args.downstream_label == "all" and type(loss) == PearsonCorrCoef:
+                        bat_loss_bk = loss(data_pred[:, 0], label[:, 0])
+                        bat_loss_dk = loss(data_pred[:, 1], label[:, 1])
+                        bat_loss_tremor = loss(data_pred[:, 2], label[:, 2])
+
+                        losses = torch.tensor([bat_loss_bk, bat_loss_dk, bat_loss_tremor])
+                        valid_losses = losses[~torch.isnan(losses)]
+
+                        if valid_losses.numel() > 0:  # Check if there are valid values
+                            bat_loss = valid_losses.mean()
+                        else:
+                            bat_loss = torch.tensor(0.0)
+                    else:
+                        bat_loss = loss(data_pred, label)
                     y_val_pred.append(data_pred.detach().cpu().numpy())
                     y_val_true.append(label.detach().cpu().numpy())
 
                 val_loss += bat_loss.item()
 
             if not pretrain:
-                dict_res = utils.report_tb_res(y_val_pred, y_val_true, epoch, writer, classification=classification, train_=False)
+                dict_res = utils.report_tb_res(args, y_val_pred, y_val_true, epoch, writer, classification=classification, train_=False)
 
         if pretrain:
             loss_name = "val_pretrain_loss"
@@ -277,7 +319,7 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                 torch.save(encoder.state_dict(), os.path.join(args.path_downstream, 'finetuned_encoder.pth'))
                 torch.save(downstream.state_dict(), os.path.join(args.path_downstream, 'finetuned_downstream.pth'))
             
-                utils.plot_predictions_downstream(writer, y_val_true, y_val_pred, classification, epoch)
+                utils.plot_predictions_downstream(writer, args, y_val_true, y_val_pred, classification, epoch)
 
                 with open(os.path.join(args.path_downstream, 'dict_res.pkl'), 'wb') as f:
                     pickle.dump(dict_res, f)
@@ -318,10 +360,16 @@ def cv_runner(args, sub_idx_test):
     logging.info(f"Number of parameters: {sum(p.numel() for p in encoder.parameters())}")
     
     linear = nn.Linear(in_features=args.d_model, out_features=in_dim_).to(args.device)
+
+    if args.downstream_label == "all":
+        out_dim = 3
+    else:
+        out_dim = 1
+
     downstream = nn.Sequential(
         nn.Linear(in_features=args.d_model * 2 * args.num_cls_token, out_features=32),
         nn.ReLU(),
-        nn.Linear(in_features=32, out_features=3)
+        nn.Linear(in_features=32, out_features=out_dim)
     ).to(args.device)
 
     args.path_pretrain = os.path.join(args.path_pretrain_base, sub_val)
@@ -337,7 +385,7 @@ def cv_runner(args, sub_idx_test):
 
     train(args, encoder, linear, downstream=downstream, pretrain=True, subs_val=sub_hem_val_list)
 
-    for classification in [True, False]:
+    for classification in [False, True]:
         if classification:
             pretext = "classification"
         else:
@@ -381,21 +429,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--num_epochs", type=int, default=300)  # 20
+    parser.add_argument("--num_epochs", type=int, default=200)  # 20
     parser.add_argument("--train_batch_size", type=int, default=50)
     parser.add_argument("--infer_batch_size", type=int, default=50)
-    parser.add_argument("--d_model", type=int, default=64)
-    parser.add_argument("--dim_feedforward", type=int, default=32)
+    parser.add_argument("--d_model", type=int, default=32)
+    parser.add_argument("--dim_feedforward", type=int, default=8)  # 32
     parser.add_argument("--seg_len", type=int, default=126)  # frequency bins
     parser.add_argument("--seq_len", type=int, default=15)
     parser.add_argument("--patience", type=int, default=50)
     parser.add_argument("--pretrain_loss", type=str, default="mae", choices=["mse", "mae"])
+    parser.add_argument("--downstream_label", type=str, default="pkg_tremor", choices=["pkg_bk", "pkg_dk", "pkg_tremor", "all"])
+    parser.add_argument("--downstream_loss", type=str, default="mae", choices=["corr", "mae", "mse"])
     parser.add_argument("--pretrain_fooof", type=bool, default=False)
     parser.add_argument("--load_pretrained", type=bool, default=True)
     parser.add_argument("--use_rotary_encoding", type=bool, default=False)
     parser.add_argument("--num_cls_token", type=int, default=1)
-    parser.add_argument("--time_ar_layer", type=int, default=4)
-    parser.add_argument("--time_ar_head", type=int, default=8)
+    parser.add_argument("--time_ar_layer", type=int, default=2)  # 4
+    parser.add_argument("--time_ar_head", type=int, default=4)  # 8
     parser.add_argument("--PATH_DATA", type=str, default="/Users/Timon/Library/CloudStorage/OneDrive-Charité-UniversitätsmedizinBerlin/Shared Documents - ICN Data World/General/Data/UCSF_OLARU/features/ts_transformer")
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--path_out", type=str, default="/Users/Timon/Documents/dbs_foundation_model/out_save")

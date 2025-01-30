@@ -5,26 +5,38 @@ import torch
 from custom_dataset import CustomDataset
 from torch.utils.data import DataLoader
 from torch import nn
+import os
 
 def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
-def plot_predictions_downstream(writer, y_val_true: list, y_val_pred: list, classification: bool, epoch: int):
+def plot_predictions_downstream(writer, args, y_val_true: list, y_val_pred: list, classification: bool, epoch: int):
     import matplotlib
     matplotlib.use('Agg')
     from matplotlib import pyplot as plt
     plt.figure()
-    for idx, idx_label in enumerate(["bk", "dk", "tremor"]):
-        plt.subplot(3, 1, idx+1)
-        if classification:
-            plt.plot(np.concatenate(y_val_true)[:, idx], label="True")
-            plt.plot(sigmoid(np.concatenate(y_val_pred)[:, idx]), label="Predicted")
-        else:
-            plt.plot(np.concatenate(y_val_true)[:, idx], label="True")
-            plt.plot(np.concatenate(y_val_pred)[:, idx], label="Predicted")
+    if args.downstream_label == "all":
+        for idx, idx_label in enumerate(["bk", "dk", "tremor"]):
+            plt.subplot(3, 1, idx+1)
+            if classification:
+                plt.plot(np.concatenate(y_val_true)[:, idx], label="True")
+                plt.plot(sigmoid(np.concatenate(y_val_pred)[:, idx]), label="Predicted")
+            else:
+                plt.plot(np.concatenate(y_val_true)[:, idx], label="True")
+                plt.plot(np.concatenate(y_val_pred)[:, idx], label="Predicted")
+            plt.legend()
+            plt.title(idx_label)
         plt.legend()
-        plt.title(idx_label)
-    plt.legend()
+    else:
+        plt.subplot(1, 1, 1)
+        if classification:
+            plt.plot(np.concatenate(y_val_true), label="True")
+            plt.plot(sigmoid(np.concatenate(y_val_pred)), label="Predicted")
+        else:
+            plt.plot(np.concatenate(y_val_true), label="True")
+            plt.plot(np.concatenate(y_val_pred), label="Predicted")
+        plt.legend()
+        plt.title(args.downstream_label)
     plt.tight_layout()
     if classification:
         writer.add_figure('Classification Predictions Val', plt.gcf(), epoch)
@@ -41,14 +53,14 @@ def plot_prediction_pretrain(writer, data_pred, data, mask, epoch: int):
     batch_idx = 0
     plt.figure()
     plt.subplot(1, 2, 1)
-    plt.imshow(pred_[batch_idx, :, :, 0].T, aspect="auto")
+    plt.imshow(pred_[batch_idx, :, :, 0].T, aspect="auto", interpolation="nearest")
     plt.title("Prediction")
     plt.gca().invert_yaxis()
     plt.clim(pred_[batch_idx, :, :, 0].min(), pred_[batch_idx, :, :, 0].max())
     plt.colorbar()
 
     plt.subplot(1, 2, 2)
-    plt.imshow(true_[batch_idx, :, :, 0].T, aspect="auto")
+    plt.imshow(true_[batch_idx, :, :, 0].T, aspect="auto", interpolation="nearest")
     plt.title("True")
     plt.colorbar()
     plt.gca().invert_yaxis()
@@ -60,7 +72,7 @@ def plot_prediction_pretrain(writer, data_pred, data, mask, epoch: int):
     writer.add_figure('Pretrain Prediction', plt.gcf(), epoch)
     plt.close()
 
-def report_tb_res(y_pred, y_true, epoch, writer, classification=False, train_=True):
+def report_tb_res(args, y_pred, y_true, epoch, writer, classification=False, train_=True):
     
     if train_:
         str_prefix = "train"
@@ -74,44 +86,73 @@ def report_tb_res(y_pred, y_true, epoch, writer, classification=False, train_=Tr
 
     if classification:
         metric_use = metrics.balanced_accuracy_score
-        ba_bk = metric_use(true_[:, 0], sigmoid(pred_[:, 0])>0.5)
-        ba_dk = metric_use(true_[:, 1], sigmoid(pred_[:, 1])>0.5)
-        ba_tremor = metric_use(true_[:, 2], sigmoid(pred_[:, 2])>0.5)
-
-        dict_res["ba_bk"] = ba_bk
-        dict_res["ba_dk"] = ba_dk
-        dict_res["ba_tremor"] = ba_tremor
-
-        writer.add_scalar(f"{str_prefix}_ba_bk", ba_bk, epoch)
-        writer.add_scalar(f"{str_prefix}_ba_dk", ba_dk, epoch)
-        writer.add_scalar(f"{str_prefix}_ba_tremor", ba_tremor, epoch)
+        if args.downstream_label == "pkg_bk" or args.downstream_label == "all":
+            if args.downstream_label == "pkg_bk":
+                ba_bk = metric_use(true_, sigmoid(pred_)>0.5)
+            else:
+                ba_bk = metric_use(true_[:, 0], sigmoid(pred_[:, 0])>0.5)
+            dict_res["ba_bk"] = ba_bk
+            writer.add_scalar(f"{str_prefix}_ba_bk", ba_bk, epoch)
+        if args.downstream_label == "pkg_dk" or args.downstream_label == "all":
+            if args.downstream_label == "pkg_dk":
+                ba_dk = metric_use(true_, sigmoid(pred_)>0.5)
+            else:
+                ba_dk = metric_use(true_[:, 1], sigmoid(pred_[:, 1])>0.5)
+            dict_res["ba_dk"] = ba_dk
+            writer.add_scalar(f"{str_prefix}_ba_dk", ba_dk, epoch)
+        if args.downstream_label == "pkg_tremor" or args.downstream_label == "all":
+            if args.downstream_label == "pkg_tremor":
+                ba_tremor = metric_use(true_, sigmoid(pred_)>0.5)
+            else:
+                ba_tremor = metric_use(true_[:, 2], sigmoid(pred_[:, 2])>0.5)
+            dict_res["ba_tremor"] = ba_tremor
+            writer.add_scalar(f"{str_prefix}_ba_tremor", ba_tremor, epoch)
     else:
         metric_use = np.corrcoef
-
-        corr_bk = metric_use(true_[:, 0], pred_[:, 0])[0, 1]
-        corr_dk = metric_use(true_[:, 1], pred_[:, 1])[0, 1]
-        corr_tremor = metric_use(true_[:, 2], pred_[:, 2])[0, 1]
-
-        dict_res["corr_bk"] = corr_bk
-        dict_res["corr_dk"] = corr_dk
-        dict_res["corr_tremor"] = corr_tremor
-
-        writer.add_scalar(f"{str_prefix}_corr_bk", corr_bk, epoch)
-        writer.add_scalar(f"{str_prefix}_corr_dk", corr_dk, epoch)
-        writer.add_scalar(f"{str_prefix}_corr_tremor", corr_tremor, epoch)
+        if args.downstream_label == "pkg_bk" or args.downstream_label == "all":
+            if args.downstream_label == "pkg_bk":
+                corr_bk = metric_use(true_, pred_)[0, 1]
+            else:
+                corr_bk = metric_use(true_[:, 0], pred_[:, 0])[0, 1]
+            dict_res["corr_bk"] = corr_bk
+            writer.add_scalar(f"{str_prefix}_corr_bk", corr_bk, epoch)
+        if args.downstream_label == "pkg_dk" or args.downstream_label == "all":
+            if args.downstream_label == "pkg_dk":
+                corr_dk = metric_use(true_, pred_)[0, 1]
+            else:
+                corr_dk = metric_use(true_[:, 1], pred_[:, 1])[0, 1]
+            dict_res["corr_dk"] = corr_dk
+            writer.add_scalar(f"{str_prefix}_corr_dk", corr_dk, epoch)
+        if args.downstream_label == "pkg_tremor" or args.downstream_label == "all":
+            if args.downstream_label == "pkg_tremor":
+                corr_tremor = metric_use(true_, pred_)[0, 1]
+            else:
+                corr_tremor = metric_use(true_[:, 2], pred_[:, 2])[0, 1]
+            dict_res["corr_tremor"] = corr_tremor
+            writer.add_scalar(f"{str_prefix}_corr_tremor", corr_tremor, epoch)
 
         metric_use = metrics.mean_absolute_error
-        mse_bk = metric_use(true_[:, 0], pred_[:, 0])
-        mse_dk = metric_use(true_[:, 1], pred_[:, 1])
-        mse_tremor = metric_use(true_[:, 2], pred_[:, 2])
-
-        dict_res["mse_bk"] = mse_bk
-        dict_res["mse_dk"] = mse_dk
-        dict_res["mse_tremor"] = mse_tremor
-
-        writer.add_scalar(f"{str_prefix}_mse_bk", mse_bk, epoch)
-        writer.add_scalar(f"{str_prefix}_mse_dk", mse_dk, epoch)
-        writer.add_scalar(f"{str_prefix}_mse_tremor", mse_tremor, epoch)
+        if args.downstream_label == "pkg_bk" or args.downstream_label == "all":
+            if args.downstream_label == "pkg_bk":
+                mae_bk = metric_use(true_, pred_)
+            else:
+                mae_bk = metric_use(true_[:, 0], pred_[:, 0])
+            dict_res["mae_bk"] = mae_bk
+            writer.add_scalar(f"{str_prefix}_mae_bk", mae_bk, epoch)
+        if args.downstream_label == "pkg_dk" or args.downstream_label == "all":
+            if args.downstream_label == "pkg_dk":
+                mae_dk = metric_use(true_, pred_)
+            else:
+                mae_dk = metric_use(true_[:, 1], pred_[:, 1])
+            dict_res["mae_dk"] = mae_dk
+            writer.add_scalar(f"{str_prefix}_mae_dk", mae_dk, epoch)
+        if args.downstream_label == "pkg_tremor" or args.downstream_label == "all":
+            if args.downstream_label == "pkg_tremor":
+                mae_tremor = metric_use(true_, pred_)
+            else:
+                mae_tremor = metric_use(true_[:, 2], pred_[:, 2])
+            dict_res["mae_tremor"] = mae_tremor
+            writer.add_scalar(f"{str_prefix}_mae_tremor", mae_tremor, epoch)
     
     return dict_res
 

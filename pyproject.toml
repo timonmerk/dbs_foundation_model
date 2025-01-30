@@ -15,5 +15,6 @@ dependencies = [
     "scipy>=1.15.1",
     "tensorboard>=2.18.0",
     "torch>=2.5.1",
+    "torchmetrics>=1.6.1",
     "tqdm>=4.67.1",
 ]
