@@ -1,5 +1,5 @@
 #!/bin/sh
-#SBATCH --mem=100GB
+#SBATCH --mem=20GB
 #SBATCH --time=7-0
 #SBATCH -o logs/fooof_06.out
 #SBATCH -e logs/fooof_06.err
