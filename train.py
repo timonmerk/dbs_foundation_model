@@ -10,7 +10,6 @@ import argparse
 import os
 from tqdm import tqdm
 from sklearn import metrics
-from fooof import FOOOFGroup
 import pickle
 from torch.utils.tensorboard import SummaryWriter
 from joblib import Parallel, delayed
@@ -21,53 +20,6 @@ from dbs_fmodel import TimeEncoder
 
 import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-def get_fooof_fit(data):
-
-    # reshape data and keep only second dim
-    data_ = data.reshape(-1, data.shape[2])
-
-    fg = FOOOFGroup()
-    fg.verbose = False
-    freqs = np.arange(0, 126, 1)
-    
-    fg.fit(freqs, 10**(data_[:, :]), freq_range=[65, 120])
-
-    offsets = fg.get_params("aperiodic_params", "offset")
-    exponents = fg.get_params("aperiodic_params", "exponent")
-
-    ap_spec = offsets[:, np.newaxis] - np.log10(freqs[np.newaxis, 1:] ** exponents[:, np.newaxis])
-    spec_wo_ac = data_[:, 1:] - ap_spec
-
-    res_ = []
-    res_.append(offsets)
-    res_.append(exponents)
-    for band in [[1, 3], [4, 8], [8, 12], [13, 20], [20, 35], [36, 58], [62, 80], [81, 124]]:
-        idx_band = np.where((freqs >= band[0]) & (freqs <= band[1]))[0]
-        res_.append(np.mean(spec_wo_ac[:, idx_band], axis=1))
-
-    DEBUG_ = False
-    if DEBUG_:
-        from matplotlib import pyplot as plt
-        plt.figure()
-        plt.plot(freqs[1:], data_[0, 1:], label="Original")
-        plt.plot(freqs[1:], ap_spec[0, :], label="Aperiodic")
-        #plt.plot(freqs[1:], spec_wo_ac[0, :], label="Without Aperiodic")
-        plt.show(block=True)
-
-        plt.figure()
-        plt.subplot(121)
-        plt.imshow(data_.T, aspect="auto")
-        plt.title("Original")
-        # flip y axis
-        plt.gca().invert_yaxis()
-        plt.subplot(122)
-        plt.imshow(ap_spec.T, aspect="auto")
-        plt.gca().invert_yaxis()
-        plt.title("Aperiodic")
-        plt.show(block=True)
-
-    return np.array(res_).T
 
 
 def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
@@ -111,9 +63,12 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
 
         train_loss = 0
         for idx, (data, label) in enumerate(data_iter_train):
-            data = torch.tensor(data, dtype=torch.float32).to(args.device)
+            # data = torch.tensor(data, dtype=torch.float32).to(args.device)
+            # label = torch.tensor(label, dtype=torch.float32)[:, :3].to(args.device)  # bk, dk, tremor, h
+            data = data.to(torch.float32).to(args.device)
+            label = label.to(torch.float32).to(args.device)[:, :3]
+
             bat_size, seq_len, seg_len, ch_num = data.shape
-            label = torch.tensor(label, dtype=torch.float32)[:, :3].to(args.device)  # bk, dk, tremor, h
 
             if args.downstream_label == "pkg_bk":
                 label = label[:, 0]
@@ -141,11 +96,20 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                 data_pred = torch.transpose(data_pred, 2, 3)
 
                 if args.pretrain_fooof:
-                    true_fooof = get_fooof_fit(data_true_mask.clone().detach().cpu().numpy())
-                    pred_fooof = get_fooof_fit(data_pred[:, mask, :, :].clone().detach().cpu().numpy())
+                    true_fooof = utils.get_fooof_fit(data_true_mask.clone().detach().cpu().numpy())
+                    pred_fooof = utils.get_fooof_fit(data_pred[:, mask, :, :].clone().detach().cpu().numpy())
                     true_fooof = torch.from_numpy(true_fooof).float().to(args.device).requires_grad_()
                     pred_fooof = torch.from_numpy(pred_fooof).float().to(args.device).requires_grad_()
-                    bat_loss = loss(pred_fooof, true_fooof)
+                    idx_not_nan_pred = ~torch.isnan(pred_fooof).any(axis=1)
+                    idx_not_nan_true = ~torch.isnan(true_fooof).any(axis=1)
+                    idx_not_nan = idx_not_nan_pred & idx_not_nan_true
+                    pred_fooof = pred_fooof[idx_not_nan]
+                    true_fooof = true_fooof[idx_not_nan]
+
+                    loss_ap = loss(pred_fooof[:, :2], true_fooof[:, :2])
+                    loss_pe = loss(pred_fooof[:, 2:], true_fooof[:, 2:])
+                    
+                    bat_loss = loss_ap * args.ap_loss_factor + loss_pe * (1 - args.ap_loss_factor)
                 else:
                     bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
             else:
@@ -216,8 +180,12 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
 
         with torch.no_grad():
             for idx, (data, label) in enumerate(data_iter_val):
-                data = torch.tensor(data, dtype=torch.float32).to(args.device)
-                label = torch.tensor(label, dtype=torch.float32)[:, :3].to(args.device)
+                # data = torch.tensor(data, dtype=torch.float32).to(args.device)
+                # label = torch.tensor(label, dtype=torch.float32)[:, :3].to(args.device)  # bk, dk, tremor, h
+                data = data.to(torch.float32).to(args.device)
+                label = label.to(torch.float32).to(args.device)[:, :3]
+
+                bat_size, seq_len, seg_len, ch_num = data.shape
 
                 if args.downstream_label == "pkg_bk":
                     label = label[:, 0]
@@ -248,11 +216,18 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                     data_pred = torch.transpose(data_pred, 2, 3)
 
                     if args.pretrain_fooof:
-                        true_fooof = get_fooof_fit(data_true_mask.detach().cpu().numpy())
-                        pred_fooof = get_fooof_fit(data_pred[:, mask, :, :].detach().cpu().numpy())
+                        true_fooof = utils.get_fooof_fit(data_true_mask.detach().cpu().numpy())
+                        pred_fooof = utils.get_fooof_fit(data_pred[:, mask, :, :].detach().cpu().numpy())
                         true_fooof = torch.tensor(true_fooof, dtype=torch.float32).to(args.device)
                         pred_fooof = torch.tensor(pred_fooof, dtype=torch.float32).to(args.device)
-                        bat_loss = loss(pred_fooof, true_fooof)
+                        idx_not_nan_pred = ~torch.isnan(pred_fooof).any(axis=1)
+                        idx_not_nan_true = ~torch.isnan(true_fooof).any(axis=1)
+                        idx_not_nan = idx_not_nan_pred & idx_not_nan_true
+                        pred_fooof = pred_fooof[idx_not_nan]
+                        true_fooof = true_fooof[idx_not_nan]
+                        loss_ap = loss(pred_fooof[:, :2], true_fooof[:, :2])
+                        loss_pe = loss(pred_fooof[:, 2:], true_fooof[:, 2:])
+                        bat_loss = loss_ap * args.ap_loss_factor + loss_pe * (1 - args.ap_loss_factor)
                     else:
                         bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
 
@@ -440,7 +415,8 @@ if __name__ == "__main__":
     parser.add_argument("--pretrain_loss", type=str, default="mae", choices=["mse", "mae"])
     parser.add_argument("--downstream_label", type=str, default="pkg_tremor", choices=["pkg_bk", "pkg_dk", "pkg_tremor", "all"])
     parser.add_argument("--downstream_loss", type=str, default="mae", choices=["corr", "mae", "mse"])
-    parser.add_argument("--pretrain_fooof", type=bool, default=False)
+    parser.add_argument("--pretrain_fooof", type=bool, default=True)
+    parser.add_argument("--ap_loss_factor", type=float, default=0.5)  # how much periodic and aperiodic losses are weighted
     parser.add_argument("--load_pretrained", type=bool, default=True)
     parser.add_argument("--use_rotary_encoding", type=bool, default=False)
     parser.add_argument("--num_cls_token", type=int, default=1)
