@@ -95,7 +95,7 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                 data_pred = linear(data_enc)
                 data_pred = torch.transpose(data_pred, 2, 3)
 
-                if args.pretrain_fooof:
+                if args.pretrain_fooof and epoch >= args.warm_up_epochs_before_fooof:
                     true_fooof = utils.get_fooof_fit(data_true_mask.clone().detach().cpu().numpy())
                     pred_fooof = utils.get_fooof_fit(data_pred[:, mask, :, :].clone().detach().cpu().numpy())
                     true_fooof = torch.from_numpy(true_fooof).float().to(args.device).requires_grad_()
@@ -109,7 +109,9 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                     loss_ap = loss(pred_fooof[:, :2], true_fooof[:, :2])
                     loss_pe = loss(pred_fooof[:, 2:], true_fooof[:, 2:])
                     
-                    bat_loss = loss_ap * args.ap_loss_factor + loss_pe * (1 - args.ap_loss_factor)
+                    loss_fooof = loss_ap * args.ap_loss_factor + loss_pe * (1 - args.ap_loss_factor)
+                    loss_spec = loss(data_pred[:, mask, :, :], data_true_mask)
+                    bat_loss = loss_fooof * args.fooof_loss_factor + loss_spec * (1 - args.fooof_loss_factor)
                 else:
                     bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
             else:
@@ -215,7 +217,7 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                     data_pred = linear(data_enc)
                     data_pred = torch.transpose(data_pred, 2, 3)
 
-                    if args.pretrain_fooof:
+                    if args.pretrain_fooof and epoch >= args.warm_up_epochs_before_fooof:
                         true_fooof = utils.get_fooof_fit(data_true_mask.detach().cpu().numpy())
                         pred_fooof = utils.get_fooof_fit(data_pred[:, mask, :, :].detach().cpu().numpy())
                         true_fooof = torch.tensor(true_fooof, dtype=torch.float32).to(args.device)
@@ -227,7 +229,11 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                         true_fooof = true_fooof[idx_not_nan]
                         loss_ap = loss(pred_fooof[:, :2], true_fooof[:, :2])
                         loss_pe = loss(pred_fooof[:, 2:], true_fooof[:, 2:])
-                        bat_loss = loss_ap * args.ap_loss_factor + loss_pe * (1 - args.ap_loss_factor)
+
+                        loss_fooof = loss_ap * args.ap_loss_factor + loss_pe * (1 - args.ap_loss_factor)
+                        loss_spec = loss(data_pred[:, mask, :, :], data_true_mask)
+                        bat_loss = loss_fooof * args.fooof_loss_factor + loss_spec * (1 - args.fooof_loss_factor)
+
                     else:
                         bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
 
@@ -404,7 +410,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--num_epochs", type=int, default=200)  # 20
+    parser.add_argument("--num_epochs", type=int, default=100)  # 20
     parser.add_argument("--train_batch_size", type=int, default=50)
     parser.add_argument("--infer_batch_size", type=int, default=50)
     parser.add_argument("--d_model", type=int, default=32)
@@ -417,6 +423,8 @@ if __name__ == "__main__":
     parser.add_argument("--downstream_loss", type=str, default="mae", choices=["corr", "mae", "mse"])
     parser.add_argument("--pretrain_fooof", type=bool, default=True)
     parser.add_argument("--ap_loss_factor", type=float, default=0.5)  # how much periodic and aperiodic losses are weighted
+    parser.add_argument("--fooof_loss_factor", type=float, default=0.1)  # how much fooof and spectrogram losses are weighted
+    parser.add_argument("--warm_up_epochs_before_fooof", type=int, default=30)
     parser.add_argument("--load_pretrained", type=bool, default=True)
     parser.add_argument("--use_rotary_encoding", type=bool, default=False)
     parser.add_argument("--num_cls_token", type=int, default=1)
