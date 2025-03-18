@@ -65,10 +65,16 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
         for idx, (data, label) in enumerate(data_iter_train):
             # data = torch.tensor(data, dtype=torch.float32).to(args.device)
             # label = torch.tensor(label, dtype=torch.float32)[:, :3].to(args.device)  # bk, dk, tremor, h
+            
+            bat_size, seq_len, seg_len, ch_num = data.shape
+
+            if args.add_hour_to_embedding:
+                hour = label[:, 3]
+                hour_expanded = hour[:, None, None, None].expand(bat_size, seq_len, 1, ch_num)  # hour is 1d
+                data = torch.cat((data, hour_expanded), dim=2)
+ 
             data = data.to(torch.float32).to(args.device)
             label = label.to(torch.float32).to(args.device)[:, :3]
-
-            bat_size, seq_len, seg_len, ch_num = data.shape
 
             if args.downstream_label == "pkg_bk":
                 label = label[:, 0]
@@ -184,10 +190,16 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
             for idx, (data, label) in enumerate(data_iter_val):
                 # data = torch.tensor(data, dtype=torch.float32).to(args.device)
                 # label = torch.tensor(label, dtype=torch.float32)[:, :3].to(args.device)  # bk, dk, tremor, h
+                
+                bat_size, seq_len, seg_len, ch_num = data.shape
+
+                if args.add_hour_to_embedding:
+                    hour = label[:, 3]
+                    hour_expanded = hour[:, None, None, None].expand(bat_size, seq_len, 1, ch_num)
+                    data = torch.cat((data, hour_expanded), dim=2)
+
                 data = data.to(torch.float32).to(args.device)
                 label = label.to(torch.float32).to(args.device)[:, :3]
-
-                bat_size, seq_len, seg_len, ch_num = data.shape
 
                 if args.downstream_label == "pkg_bk":
                     label = label[:, 0]
@@ -328,7 +340,7 @@ def cv_runner(args, sub_idx_test):
     
     sub_hem_val_list = [hem for hem in sub_hem_unique if hem.startswith(sub_val)]
     
-    in_dim_ = args.seg_len
+    in_dim_ = args.seg_len if args.add_hour_to_embedding is False else args.seg_len + 1
     encoder = TimeEncoder(in_dim=in_dim_,
                             d_model=args.d_model,
                             dim_feedforward=args.dim_feedforward,
@@ -410,21 +422,22 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--num_epochs", type=int, default=100)  # 20
+    parser.add_argument("--num_epochs", type=int, default=100)  # 100
     parser.add_argument("--train_batch_size", type=int, default=50)
     parser.add_argument("--infer_batch_size", type=int, default=50)
-    parser.add_argument("--d_model", type=int, default=32)
-    parser.add_argument("--dim_feedforward", type=int, default=8)  # 32
+    parser.add_argument("--d_model", type=int, default=64)
+    parser.add_argument("--dim_feedforward", type=int, default=32)  # 32
     parser.add_argument("--seg_len", type=int, default=126)  # frequency bins
     parser.add_argument("--seq_len", type=int, default=15)
     parser.add_argument("--patience", type=int, default=50)
     parser.add_argument("--pretrain_loss", type=str, default="mae", choices=["mse", "mae"])
-    parser.add_argument("--downstream_label", type=str, default="pkg_tremor", choices=["pkg_bk", "pkg_dk", "pkg_tremor", "all"])
+    parser.add_argument("--downstream_label", type=str, default="all", choices=["pkg_bk", "pkg_dk", "pkg_tremor", "all"])
     parser.add_argument("--downstream_loss", type=str, default="mae", choices=["corr", "mae", "mse"])
-    parser.add_argument("--pretrain_fooof", type=bool, default=True)
+    parser.add_argument("--pretrain_fooof", type=bool, default=False)
     parser.add_argument("--ap_loss_factor", type=float, default=0.5)  # how much periodic and aperiodic losses are weighted
     parser.add_argument("--fooof_loss_factor", type=float, default=0.1)  # how much fooof and spectrogram losses are weighted
     parser.add_argument("--warm_up_epochs_before_fooof", type=int, default=30)
+    parser.add_argument("--add_hour_to_embedding", type=bool, default=True)
     parser.add_argument("--load_pretrained", type=bool, default=True)
     parser.add_argument("--use_rotary_encoding", type=bool, default=False)
     parser.add_argument("--num_cls_token", type=int, default=1)
