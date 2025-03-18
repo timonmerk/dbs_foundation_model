@@ -422,14 +422,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--num_epochs", type=int, default=100)  # 100
+    parser.add_argument("--num_epochs", type=int, default=30)  # 100
     parser.add_argument("--train_batch_size", type=int, default=50)
     parser.add_argument("--infer_batch_size", type=int, default=50)
     parser.add_argument("--d_model", type=int, default=64)
     parser.add_argument("--dim_feedforward", type=int, default=32)  # 32
     parser.add_argument("--seg_len", type=int, default=126)  # frequency bins
     parser.add_argument("--seq_len", type=int, default=15)
-    parser.add_argument("--patience", type=int, default=50)
+    parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--pretrain_loss", type=str, default="mae", choices=["mse", "mae"])
     parser.add_argument("--downstream_label", type=str, default="all", choices=["pkg_bk", "pkg_dk", "pkg_tremor", "all"])
     parser.add_argument("--downstream_loss", type=str, default="mae", choices=["corr", "mae", "mse"])
@@ -448,7 +448,7 @@ if __name__ == "__main__":
     parser.add_argument("--path_out", type=str, default="/Users/Timon/Documents/dbs_foundation_model/out_save")
     parser.add_argument("--tb_name", type=str, default='fm')
     parser.add_argument("--sub_idx", type=int, default=0)
-    parser.add_argument("--multiprocess_on_one_machine", type=bool, default=False)
+    parser.add_argument("--multiprocess_on_one_machine", type=bool, default=True)
 
     args = parser.parse_args()
 

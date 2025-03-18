@@ -181,20 +181,20 @@ def plot_prediction_pretrain(writer, data_pred, data, mask, epoch: int):
     batch_idx = 0
     plt.figure()
     plt.subplot(1, 2, 1)
-    plt.imshow(pred_[batch_idx, :, :, 0].T, aspect="auto", interpolation="nearest")
+    plt.imshow(pred_[batch_idx, :, :-1, 0].T, aspect="auto", interpolation="nearest")
     plt.title("Prediction")
     plt.gca().invert_yaxis()
-    plt.clim(pred_[batch_idx, :, :, 0].min(), pred_[batch_idx, :, :, 0].max())
+    plt.clim(pred_[batch_idx, :, :-1, 0].min(), pred_[batch_idx, :, :, 0].max())
     plt.colorbar()
 
     plt.subplot(1, 2, 2)
-    plt.imshow(true_[batch_idx, :, :, 0].T, aspect="auto", interpolation="nearest")
+    plt.imshow(true_[batch_idx, :, :-1, 0].T, aspect="auto", interpolation="nearest")
     plt.title("True")
     plt.colorbar()
     plt.gca().invert_yaxis()
     a_ = true_[batch_idx, :, :, 0]
     a_max = np.max(a_[np.nonzero(a_)])
-    plt.clim(true_[batch_idx, :, :, 0].min(), a_max
+    plt.clim(true_[batch_idx, :, :-1, 0].min(), a_max
              )
     
     writer.add_figure('Pretrain Prediction', plt.gcf(), epoch)
