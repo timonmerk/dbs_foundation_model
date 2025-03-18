@@ -422,7 +422,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--num_epochs", type=int, default=30)  # 100
+    parser.add_argument("--num_epochs", type=int, default=100)  # 100
     parser.add_argument("--train_batch_size", type=int, default=50)
     parser.add_argument("--infer_batch_size", type=int, default=50)
     parser.add_argument("--d_model", type=int, default=64)
@@ -448,7 +448,7 @@ if __name__ == "__main__":
     parser.add_argument("--path_out", type=str, default="/Users/Timon/Documents/dbs_foundation_model/out_save")
     parser.add_argument("--tb_name", type=str, default='fm')
     parser.add_argument("--sub_idx", type=int, default=0)
-    parser.add_argument("--multiprocess_on_one_machine", type=bool, default=True)
+    parser.add_argument("--multiprocess_on_one_machine", type=bool, default=False)
 
     args = parser.parse_args()
 
