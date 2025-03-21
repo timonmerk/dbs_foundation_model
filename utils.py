@@ -144,7 +144,7 @@ def plot_predictions_downstream(writer, args, y_val_true: list, y_val_pred: list
     from matplotlib import pyplot as plt
     plt.figure()
     if args.downstream_label == "all":
-        for idx, idx_label in enumerate(["bk", "dk", "tremor"]):
+        for idx, idx_label in enumerate(["bk", "dk"]):  # "tremor"
             plt.subplot(3, 1, idx+1)
             if classification:
                 plt.plot(np.concatenate(y_val_true)[:, idx], label="True")
@@ -228,7 +228,7 @@ def report_tb_res(args, y_pred, y_true, epoch, writer, classification=False, tra
                 ba_dk = metric_use(true_[:, 1], sigmoid(pred_[:, 1])>0.5)
             dict_res["ba_dk"] = ba_dk
             writer.add_scalar(f"{str_prefix}_ba_dk", ba_dk, epoch)
-        if args.downstream_label == "pkg_tremor" or args.downstream_label == "all":
+        if args.downstream_label == "pkg_tremor":  #  or args.downstream_label == "all"
             if args.downstream_label == "pkg_tremor":
                 ba_tremor = metric_use(true_, sigmoid(pred_)>0.5)
             else:
@@ -251,7 +251,7 @@ def report_tb_res(args, y_pred, y_true, epoch, writer, classification=False, tra
                 corr_dk = metric_use(true_[:, 1], pred_[:, 1])[0, 1]
             dict_res["corr_dk"] = corr_dk
             writer.add_scalar(f"{str_prefix}_corr_dk", corr_dk, epoch)
-        if args.downstream_label == "pkg_tremor" or args.downstream_label == "all":
+        if args.downstream_label == "pkg_tremor" : # or args.downstream_label == "all"
             if args.downstream_label == "pkg_tremor":
                 corr_tremor = metric_use(true_, pred_)[0, 1]
             else:
@@ -274,7 +274,7 @@ def report_tb_res(args, y_pred, y_true, epoch, writer, classification=False, tra
                 mae_dk = metric_use(true_[:, 1], pred_[:, 1])
             dict_res["mae_dk"] = mae_dk
             writer.add_scalar(f"{str_prefix}_mae_dk", mae_dk, epoch)
-        if args.downstream_label == "pkg_tremor" or args.downstream_label == "all":
+        if args.downstream_label == "pkg_tremor":   #  or args.downstream_label == "all"
             if args.downstream_label == "pkg_tremor":
                 mae_tremor = metric_use(true_, pred_)
             else:

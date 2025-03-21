@@ -15,6 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 from joblib import Parallel, delayed
 import torch.multiprocessing as mp
 import utils
+from queue import Queue
 from custom_dataset import CustomDataset
 from dbs_fmodel import TimeEncoder
 
@@ -46,8 +47,8 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
     dataset_train = CustomDataset(args.PATH_DATA, subs_train, classification=classification)
     dataset_val = CustomDataset(args.PATH_DATA, subs_val, classification=classification)
 
-    data_iter_train = DataLoader(dataset_train, shuffle=True, batch_size=args.train_batch_size, drop_last=False, num_workers=1)
-    data_iter_val = DataLoader(dataset_val, shuffle=False, batch_size=args.infer_batch_size, drop_last=False, num_workers=1)
+    data_iter_train = DataLoader(dataset_train, shuffle=True, batch_size=args.train_batch_size, drop_last=False, num_workers=1, pin_memory=False, persistent_workers=True)
+    data_iter_val = DataLoader(dataset_val, shuffle=False, batch_size=args.infer_batch_size, drop_last=False, num_workers=1, pin_memory=False, persistent_workers=True)
     
     encoder.train()
     linear.train()
@@ -58,6 +59,7 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
 
     y_train_pred = []
     y_train_true = []
+    d_res_all = {}
     
     for epoch in range(args.num_epochs):
 
@@ -68,13 +70,14 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
             
             bat_size, seq_len, seg_len, ch_num = data.shape
 
-            if args.add_hour_to_embedding:
+            if args.add_hour_to_features:
                 hour = label[:, 3]
                 hour_expanded = hour[:, None, None, None].expand(bat_size, seq_len, 1, ch_num)  # hour is 1d
                 data = torch.cat((data, hour_expanded), dim=2)
  
             data = data.to(torch.float32).to(args.device)
-            label = label.to(torch.float32).to(args.device)[:, :3]
+            hour = label[:, 3].to(torch.float32).to(args.device)
+            label = label.to(torch.float32).to(args.device)[:, :2]
 
             if args.downstream_label == "pkg_bk":
                 label = label[:, 0]
@@ -93,9 +96,10 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                 data_true_mask = data[:, mask, :, :].clone()
                 data[:, mask, :, :] = 0
 
-            cls_token_embs, data_enc = encoder(data)
-            data_enc = data_enc.reshape(bat_size, seq_len, ch_num, args.d_model)
-            cls_token_embs = cls_token_embs.reshape(bat_size, args.num_cls_token, ch_num, args.d_model)
+            cls_token_embs, data_enc = encoder(data, hour)
+            d_model_ = args.d_model + 1 if args.add_hour_to_embedding else args.d_model
+            data_enc = data_enc.reshape(bat_size, seq_len, ch_num, d_model_)
+            cls_token_embs = cls_token_embs.reshape(bat_size, args.num_cls_token, ch_num, d_model_)
 
             if pretrain:
                 data_pred = linear(data_enc)
@@ -136,8 +140,11 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                     else:
                         loss = PearsonCorrCoef()
 
-                cls_token_embs = cls_token_embs.reshape(bat_size, args.num_cls_token * ch_num * args.d_model)
+                cls_token_embs = cls_token_embs.reshape(bat_size, args.num_cls_token * ch_num * d_model_)
                 data_pred = torch.squeeze(downstream(cls_token_embs))
+                if len(data_pred.shape) == 1:
+                    data_pred = data_pred[None, :]
+                
                 if args.downstream_label == "all" and type(loss) == PearsonCorrCoef:
                     bat_loss_bk = loss(data_pred[:, 0], label[:, 0])
                     bat_loss_dk = loss(data_pred[:, 1], label[:, 1])
@@ -193,13 +200,14 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                 
                 bat_size, seq_len, seg_len, ch_num = data.shape
 
-                if args.add_hour_to_embedding:
+                if args.add_hour_to_features:
                     hour = label[:, 3]
                     hour_expanded = hour[:, None, None, None].expand(bat_size, seq_len, 1, ch_num)
                     data = torch.cat((data, hour_expanded), dim=2)
 
                 data = data.to(torch.float32).to(args.device)
-                label = label.to(torch.float32).to(args.device)[:, :3]
+                hour = label[:, 3].to(torch.float32).to(args.device)
+                label = label.to(torch.float32).to(args.device)[:, :2]
 
                 if args.downstream_label == "pkg_bk":
                     label = label[:, 0]
@@ -221,9 +229,10 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                     data_true_mask = data[:, mask, :, :].clone()
                     data[:, mask, :, :] = 0
 
-                cls_token_embs, data_enc = encoder(data)
-                data_enc = data_enc.reshape(bat_size, seq_len, ch_num, args.d_model)
-                cls_token_embs = cls_token_embs.reshape(bat_size, args.num_cls_token, ch_num, args.d_model)
+                cls_token_embs, data_enc = encoder(data, hour)
+                d_model_ = args.d_model + 1 if args.add_hour_to_embedding else args.d_model
+                data_enc = data_enc.reshape(bat_size, seq_len, ch_num, d_model_)
+                cls_token_embs = cls_token_embs.reshape(bat_size, args.num_cls_token, ch_num, d_model_)
 
                 if pretrain: 
                     data_pred = linear(data_enc)
@@ -250,13 +259,15 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                         bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
 
                 else:  # downstream
-                    cls_token_embs = cls_token_embs.reshape(bat_size, args.num_cls_token * ch_num * args.d_model)
+                    cls_token_embs = cls_token_embs.reshape(bat_size, args.num_cls_token * ch_num * d_model_)
                     data_pred = torch.squeeze(downstream(cls_token_embs))
+                    if len(data_pred.shape) == 1:
+                        data_pred = data_pred[None, :]
 
                     if classification:
                         class_counts = label.sum(axis=0)
                         if torch.sum(class_counts == 0):
-                            weights = torch.ones(3)
+                            weights = torch.ones(2)
                         else:
                             weights = 1/(class_counts / label.shape[0])
                         loss = nn.BCEWithLogitsLoss(pos_weight=weights.to(args.device))
@@ -271,9 +282,9 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                     if args.downstream_label == "all" and type(loss) == PearsonCorrCoef:
                         bat_loss_bk = loss(data_pred[:, 0], label[:, 0])
                         bat_loss_dk = loss(data_pred[:, 1], label[:, 1])
-                        bat_loss_tremor = loss(data_pred[:, 2], label[:, 2])
+                        #bat_loss_tremor = loss(data_pred[:, 2], label[:, 2])
 
-                        losses = torch.tensor([bat_loss_bk, bat_loss_dk, bat_loss_tremor])
+                        losses = torch.tensor([bat_loss_bk, bat_loss_dk])  # bat_loss_tremor
                         valid_losses = losses[~torch.isnan(losses)]
 
                         if valid_losses.numel() > 0:  # Check if there are valid values
@@ -282,6 +293,7 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                             bat_loss = torch.tensor(0.0)
                     else:
                         bat_loss = loss(data_pred, label)
+
                     y_val_pred.append(data_pred.detach().cpu().numpy())
                     y_val_true.append(label.detach().cpu().numpy())
 
@@ -289,7 +301,10 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
 
             if not pretrain:
                 dict_res = utils.report_tb_res(args, y_val_pred, y_val_true, epoch, writer, classification=classification, train_=False)
-
+                dict_res["epoch"] = epoch
+                dict_res["y_pred"] = np.concatenate(y_val_pred)
+                dict_res["y_true"] = np.concatenate(y_val_true)
+                d_res_all[epoch] = dict_res
         if pretrain:
             loss_name = "val_pretrain_loss"
         else:
@@ -332,6 +347,11 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
     if early_stop:
         logging.info("Early stopping triggered")
 
+    # Save the results
+    if not pretrain:
+        with open(os.path.join(args.path_downstream, 'dict_res.pkl'), 'wb') as f:
+            pickle.dump(d_res_all, f)
+
 def cv_runner(args, sub_idx_test):
 
     sub_hem_unique = pd.read_csv(os.path.join(args.PATH_DATA, "all_label_series.csv"))["sub"].unique()
@@ -340,7 +360,7 @@ def cv_runner(args, sub_idx_test):
     
     sub_hem_val_list = [hem for hem in sub_hem_unique if hem.startswith(sub_val)]
     
-    in_dim_ = args.seg_len if args.add_hour_to_embedding is False else args.seg_len + 1
+    in_dim_ = args.seg_len +1  if args.add_hour_to_features else args.seg_len
     encoder = TimeEncoder(in_dim=in_dim_,
                             d_model=args.d_model,
                             dim_feedforward=args.dim_feedforward,
@@ -348,19 +368,22 @@ def cv_runner(args, sub_idx_test):
                             n_layer=args.time_ar_layer,
                             nhead=args.time_ar_head,
                             num_cls_token=args.num_cls_token,
-                            use_rotary_encoding=args.use_rotary_encoding).to(args.device)
+                            use_rotary_encoding=args.use_rotary_encoding,
+                            add_hour_emb=args.add_hour_to_embedding
+                            ).to(args.device)
     
     logging.info(f"Number of parameters: {sum(p.numel() for p in encoder.parameters())}")
     
-    linear = nn.Linear(in_features=args.d_model, out_features=in_dim_).to(args.device)
+    d_model_ = args.d_model + 1 if args.add_hour_to_embedding else args.d_model
+    linear = nn.Linear(in_features=d_model_, out_features=in_dim_).to(args.device)
 
     if args.downstream_label == "all":
-        out_dim = 3
+        out_dim = 2
     else:
         out_dim = 1
 
     downstream = nn.Sequential(
-        nn.Linear(in_features=args.d_model * 2 * args.num_cls_token, out_features=32),
+        nn.Linear(in_features=d_model_ * 2 * args.num_cls_token, out_features=32),
         nn.ReLU(),
         nn.Linear(in_features=32, out_features=out_dim)
     ).to(args.device)
@@ -422,22 +445,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--num_epochs", type=int, default=100)  # 100
+    parser.add_argument("--num_epochs", type=int, default=2)  # 100
     parser.add_argument("--train_batch_size", type=int, default=50)
     parser.add_argument("--infer_batch_size", type=int, default=50)
-    parser.add_argument("--d_model", type=int, default=64)
+    parser.add_argument("--d_model", type=int, default=64)  # 63 if add_hour_to_embedding
     parser.add_argument("--dim_feedforward", type=int, default=32)  # 32
     parser.add_argument("--seg_len", type=int, default=126)  # frequency bins
     parser.add_argument("--seq_len", type=int, default=15)
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--pretrain_loss", type=str, default="mae", choices=["mse", "mae"])
-    parser.add_argument("--downstream_label", type=str, default="all", choices=["pkg_bk", "pkg_dk", "pkg_tremor", "all"])
+    parser.add_argument("--downstream_label", type=str, default="all", choices=["pkg_bk", "pkg_dk", "pkg_tremor", "all"])  # all is currently just bk and dk
     parser.add_argument("--downstream_loss", type=str, default="mae", choices=["corr", "mae", "mse"])
     parser.add_argument("--pretrain_fooof", type=bool, default=False)
     parser.add_argument("--ap_loss_factor", type=float, default=0.5)  # how much periodic and aperiodic losses are weighted
     parser.add_argument("--fooof_loss_factor", type=float, default=0.1)  # how much fooof and spectrogram losses are weighted
     parser.add_argument("--warm_up_epochs_before_fooof", type=int, default=30)
-    parser.add_argument("--add_hour_to_embedding", type=bool, default=True)
+    parser.add_argument("--add_hour_to_embedding", type=bool, default=False)
+    parser.add_argument("--add_hour_to_features", type=bool, default=True)
     parser.add_argument("--load_pretrained", type=bool, default=True)
     parser.add_argument("--use_rotary_encoding", type=bool, default=False)
     parser.add_argument("--num_cls_token", type=int, default=1)
@@ -445,9 +469,9 @@ if __name__ == "__main__":
     parser.add_argument("--time_ar_head", type=int, default=4)  # 8
     parser.add_argument("--PATH_DATA", type=str, default="/Users/Timon/Library/CloudStorage/OneDrive-Charité-UniversitätsmedizinBerlin/Shared Documents - ICN Data World/General/Data/UCSF_OLARU/features/ts_transformer")
     parser.add_argument("--device", type=str, default="cpu")
-    parser.add_argument("--path_out", type=str, default="/Users/Timon/Documents/dbs_foundation_model/out_save")
+    parser.add_argument("--path_out", type=str, default="/Users/Timon/Documents/dbs_foundation_model/out_save_debug")
     parser.add_argument("--tb_name", type=str, default='fm')
-    parser.add_argument("--sub_idx", type=int, default=0)
+    parser.add_argument("--sub_idx", type=int, default=6)  # 0
     parser.add_argument("--multiprocess_on_one_machine", type=bool, default=False)
 
     args = parser.parse_args()
@@ -463,7 +487,7 @@ if __name__ == "__main__":
     if not args.multiprocess_on_one_machine:
         process_wrapper(args, args.sub_idx)
     else:
-        max_parallel_processes = 5
+        max_parallel_processes = sub_unique.shape[0]
 
         processes = []
         for sub_idx_test in range(sub_unique.shape[0]):
@@ -481,4 +505,4 @@ if __name__ == "__main__":
         for p in processes:
             p.join()
 
-        save_res_combined(sub_unique, args)
+        #save_res_combined(sub_unique, args)
