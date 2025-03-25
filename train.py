@@ -50,6 +50,12 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
     data_iter_train = DataLoader(dataset_train, shuffle=True, batch_size=args.train_batch_size, drop_last=False, num_workers=1, pin_memory=False, persistent_workers=True)
     data_iter_val = DataLoader(dataset_val, shuffle=False, batch_size=args.infer_batch_size, drop_last=False, num_workers=1, pin_memory=False, persistent_workers=True)
     
+    if args.apply_log_scaling:
+        mean_spectrum = np.load(os.path.join(args.PATH_DATA, "all_arr_series.npy"))
+        mean_spectrum = mean_spectrum.mean(axis=(0, 1, 3)).mean()
+        log_f = np.log(np.arange(1, args.seg_len + 1)) + mean_spectrum
+        log_f = torch.tensor(log_f, dtype=torch.float32).to(args.device)
+
     encoder.train()
     linear.train()
 
@@ -123,7 +129,13 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                     loss_spec = loss(data_pred[:, mask, :, :], data_true_mask)
                     bat_loss = loss_fooof * args.fooof_loss_factor + loss_spec * (1 - args.fooof_loss_factor)
                 else:
-                    bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
+                    if args.apply_log_scaling:
+                        bat_loss = loss(
+                            torch.mul(data_pred[:, mask, :126, :], log_f.view(1, 1, 126, 1)),
+                            torch.mul(data_true_mask[:, :, :126, :], log_f.view(1, 1, 126, 1))
+                        )
+                    else:
+                        bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
             else:
                 if classification:
                     class_counts = label.sum(axis=0)
@@ -256,7 +268,13 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                         bat_loss = loss_fooof * args.fooof_loss_factor + loss_spec * (1 - args.fooof_loss_factor)
 
                     else:
-                        bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
+                        if args.apply_log_scaling:
+                            bat_loss = loss(
+                                torch.mul(data_pred[:, mask, :126, :], log_f.view(1, 1, 126, 1)),
+                                torch.mul(data_true_mask[:, :, :126, :], log_f.view(1, 1, 126, 1))
+                            )
+                        else:
+                            bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
 
                 else:  # downstream
                     cls_token_embs = cls_token_embs.reshape(bat_size, args.num_cls_token * ch_num * d_model_)
@@ -460,6 +478,7 @@ if __name__ == "__main__":
     parser.add_argument("--ap_loss_factor", type=float, default=0.5)  # how much periodic and aperiodic losses are weighted
     parser.add_argument("--fooof_loss_factor", type=float, default=0.1)  # how much fooof and spectrogram losses are weighted
     parser.add_argument("--warm_up_epochs_before_fooof", type=int, default=30)
+    parser.add_argument("--apply_log_scaling", type=bool, default=True)
     parser.add_argument("--add_hour_to_embedding", type=bool, default=False)
     parser.add_argument("--add_hour_to_features", type=bool, default=True)
     parser.add_argument("--load_pretrained", type=bool, default=True)

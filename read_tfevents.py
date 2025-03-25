@@ -43,6 +43,8 @@ for sub in subs:
         })
 df = pd.DataFrame(per_)
 
+df.query("pkg_type == 'bk' and last_epoch == True")["per"].mean()
+df.query("pkg_type == 'dk' and last_epoch == True")["per"].std()
 
 # PLOT ind. prediction traces
 # save each plot in a pdf
