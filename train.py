@@ -131,8 +131,8 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                 else:
                     if args.apply_log_scaling:
                         bat_loss = loss(
-                            torch.mul(data_pred[:, mask, :126, :], log_f.view(1, 1, 126, 1)),
-                            torch.mul(data_true_mask[:, :, :126, :], log_f.view(1, 1, 126, 1))
+                            torch.mul(data_pred[:, mask, :126, :] - log_f.min(), log_f.view(1, 1, 126, 1) - log_f.min()),
+                            torch.mul(data_true_mask[:, :, :126, :] - log_f.min(), log_f.view(1, 1, 126, 1) - log_f.min())
                         )
                     else:
                         bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
@@ -270,8 +270,8 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
                     else:
                         if args.apply_log_scaling:
                             bat_loss = loss(
-                                torch.mul(data_pred[:, mask, :126, :], log_f.view(1, 1, 126, 1)),
-                                torch.mul(data_true_mask[:, :, :126, :], log_f.view(1, 1, 126, 1))
+                                torch.mul(data_pred[:, mask, :126, :]- log_f.min(), log_f.view(1, 1, 126, 1)- log_f.min()),
+                                torch.mul(data_true_mask[:, :, :126, :]- log_f.min(), log_f.view(1, 1, 126, 1)- log_f.min())
                             )
                         else:
                             bat_loss = loss(data_pred[:, mask, :, :], data_true_mask)
