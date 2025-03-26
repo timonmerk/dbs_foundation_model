@@ -480,7 +480,7 @@ if __name__ == "__main__":
     parser.add_argument("--warm_up_epochs_before_fooof", type=int, default=30)
     parser.add_argument("--apply_log_scaling", type=bool, default=True)
     parser.add_argument("--add_hour_to_embedding", type=bool, default=False)
-    parser.add_argument("--add_hour_to_features", type=bool, default=True)
+    parser.add_argument("--add_hour_to_features", type=bool, default=False)
     parser.add_argument("--load_pretrained", type=bool, default=True)
     parser.add_argument("--use_rotary_encoding", type=bool, default=False)
     parser.add_argument("--num_cls_token", type=int, default=1)
@@ -494,6 +494,8 @@ if __name__ == "__main__":
     parser.add_argument("--multiprocess_on_one_machine", type=bool, default=False)
 
     args = parser.parse_args()
+
+    logging.info(f"add_hour_to_features: {args.add_hour_to_features}")
 
     args.path_pretrain_base = os.path.join(args.path_out, "models_save")
     args.path_downstream_base = os.path.join(args.path_out, "models_save_downstream")
