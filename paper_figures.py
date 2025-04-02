@@ -8,8 +8,36 @@ from scipy import stats
 from tensorboard.backend.event_processing import event_accumulator
 
 PATH_FIGURES = '/Users/Timon/Library/CloudStorage/OneDrive-Charité-UniversitätsmedizinBerlin/Dokumente/Decoding toolbox/Paper IEEE NER/figures'
+PATH_DATA = "/Users/Timon/Library/CloudStorage/OneDrive-Charité-UniversitätsmedizinBerlin/Shared Documents - ICN Data World/General/Data/UCSF_OLARU/features/ts_transformer"
 
-PATH_traces = "out_cluster/regression"
+# plot mean PSD
+seg_len = 126
+mean_spectrum_ = np.load(os.path.join(PATH_DATA, "all_arr_series.npy"))
+df_label = pd.read_csv(os.path.join(PATH_DATA, "all_label_series.csv"))
+df_label.groupby("sub").count()["pkg_dt"].mean()
+df_label.groupby("sub").count()["pkg_dt"].std()
+df_label.groupby("sub").count()["pkg_dt"].sum()
+
+mean_spectrum = mean_spectrum_.mean(axis=(0, 1, 3)).mean()
+log_f = np.log(np.arange(1, seg_len + 1)) + mean_spectrum
+
+colors = sns.color_palette("viridis", 3)
+plt.figure(figsize=(5, 3))
+plt.plot(log_f, label="log(f)", color=colors[0])
+plt.plot(mean_spectrum_.mean(axis=(0, 1, 3)), label="Mean spectrum", color=colors[1])
+plt.plot((log_f + mean_spectrum_.mean(axis=(0, 1, 3)))/2, label="Avg(log(f), mean spectrum)", color=colors[2])
+plt.legend()
+plt.xlabel("Frequency (Hz)")
+plt.ylabel("Power spectral density [dB]")
+plt.title("Log loss function scaling")
+plt.tight_layout()
+plt.savefig(os.path.join(PATH_FIGURES, "log_loss_scaling.pdf"))
+plt.show()
+
+
+#PATH_traces = "out_cluster/regression"
+PATH_base = "out_save_log"
+PATH_traces = os.path.join(PATH_base, "models_save_downstream", "regression")
 subs = os.listdir(PATH_traces)
 
 per_ = []
@@ -44,6 +72,9 @@ for sub in subs:
 df = pd.DataFrame(per_)
 
 df.query("pkg_type == 'bk' and last_epoch == True")["per"].mean()
+df.query("pkg_type == 'bk' and last_epoch == True")["per"].std()
+
+df.query("pkg_type == 'dk' and last_epoch == True")["per"].mean()
 df.query("pkg_type == 'dk' and last_epoch == True")["per"].std()
 
 # PLOT ind. prediction traces
@@ -124,6 +155,7 @@ if PLT_:
     plt.show()
 
 PATH_EVENTS = "out_cluster/runs"
+PATH_EVENTS = os.path.join(PATH_base, "runs")
 subs = [f for f in os.listdir(PATH_EVENTS) if "rcs" in f]
 l_ = []
 for sub in subs:
@@ -158,7 +190,7 @@ for sub in df_all["sub"].unique():
 per__ = df_all.query("tag == 'train'").groupby("epoch")["mae"].mean()
 plt.plot(df_all.query("tag == 'train'")["epoch"].unique(), per__, label="mean", color="black", linewidth=2.5)
 plt.yscale('log')
-plt.ylim([120, 300])
+plt.ylim([400, 1000])
 plt.ylabel("MAE")
 plt.xlabel("Epoch")
 plt.title("Train set")
@@ -171,7 +203,7 @@ per__ = df_all.query("tag == 'val'").groupby("epoch")["mae"].mean()
 plt.plot(df_all.query("tag == 'val'")["epoch"].unique(), per__, label="mean", color="black", linewidth=2.5)
 # make log scale
 plt.yscale('log')
-plt.ylim([2, 200])
+plt.ylim([5, 2000])
 plt.ylabel("MAE")
 plt.xlabel("Epoch")
 plt.title("Validation set")

@@ -226,7 +226,7 @@ if __name__ == "__main__":
     parser.add_argument("--time_ar_head", type=int, default=4)  # 8
     parser.add_argument("--PATH_DATA", type=str, default="/Users/Timon/Library/CloudStorage/OneDrive-Charité-UniversitätsmedizinBerlin/Shared Documents - ICN Data World/General/Data/UCSF_OLARU/features/ts_transformer")
     parser.add_argument("--device", type=str, default="cpu")
-    parser.add_argument("--path_out", type=str, default="/Users/Timon/Documents/dbs_foundation_model/out_save_debug")
+    parser.add_argument("--path_out", type=str, default="/Users/Timon/Documents/dbs_foundation_model/out_save_log")  # change here path 
     parser.add_argument("--tb_name", type=str, default='fm')
     parser.add_argument("--sub_idx", type=int, default=6)  # 0
     parser.add_argument("--multiprocess_on_one_machine", type=bool, default=False)

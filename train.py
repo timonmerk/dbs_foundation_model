@@ -51,8 +51,8 @@ def train(args, encoder: nn.Module, linear: nn.Module, downstream: nn.Module,
     data_iter_val = DataLoader(dataset_val, shuffle=False, batch_size=args.infer_batch_size, drop_last=False, num_workers=1, pin_memory=False, persistent_workers=True)
     
     if args.apply_log_scaling:
-        mean_spectrum = np.load(os.path.join(args.PATH_DATA, "all_arr_series.npy"))
-        mean_spectrum = mean_spectrum.mean(axis=(0, 1, 3)).mean()
+        mean_spectrum_ = np.load(os.path.join(args.PATH_DATA, "all_arr_series.npy"))
+        mean_spectrum = mean_spectrum_.mean(axis=(0, 1, 3)).mean()
         log_f = np.log(np.arange(1, args.seg_len + 1)) + mean_spectrum
         log_f = torch.tensor(log_f, dtype=torch.float32).to(args.device)
 
@@ -437,20 +437,24 @@ def cv_runner(args, sub_idx_test):
 def process_wrapper(args, sub_idx_test):
     return cv_runner(args, sub_idx_test)
 
-def save_res_combined(sub_unique, args):
-    dict_res = []
+def save_res_combined(args):
+    
     for ml_task in ["regression", "classification"]:
-        for sub_idx_test in range(sub_unique.shape[0]):
-            sub_val = sub_unique[sub_idx_test]
+        dict_res = []
+        subs_ = [f for f in os.listdir(os.path.join(args.path_downstream_base, ml_task)) if "rcs" in f]
+        for sub_idx_test in range(len(subs_)):
+            sub_val = subs_[sub_idx_test]
             with open(os.path.join(args.path_downstream_base, ml_task, sub_val, 'dict_res.pkl'), 'rb') as f:
                 res_sub = pickle.load(f)
-                res_sub["sub"] = sub_val
-            dict_res.append(res_sub)
-    df = pd.DataFrame(dict_res)
-    df.set_index('sub', inplace=True)
-    df_merged = df.groupby(df.index).first()
-    df_merged.reset_index(inplace=True)
-    df_merged.to_csv(os.path.join(args.path_out, "results.csv"), index=False)
+            for epoch in res_sub.keys():
+                # remove y_pred and y_true from dict_res
+                res_sub[epoch].pop("y_pred", None)
+                res_sub[epoch].pop("y_true", None)
+                res_sub[epoch]["sub"] = sub_val
+                dict_res.append(res_sub[epoch])
+        df = pd.DataFrame(dict_res)
+        name_ = f"results_{ml_task}.csv"
+        df.to_csv(os.path.join(args.path_out, name_), index=False)
 
 if __name__ == "__main__":
 
@@ -469,20 +473,20 @@ if __name__ == "__main__":
     parser.add_argument("--d_model", type=int, default=64)  # 63 if add_hour_to_embedding
     parser.add_argument("--dim_feedforward", type=int, default=32)  # 32
     parser.add_argument("--seg_len", type=int, default=126)  # frequency bins
-    parser.add_argument("--seq_len", type=int, default=15)
+    parser.add_argument("--seq_len", type=int, default=15) # fixed by data
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--pretrain_loss", type=str, default="mae", choices=["mse", "mae"])
     parser.add_argument("--downstream_label", type=str, default="all", choices=["pkg_bk", "pkg_dk", "pkg_tremor", "all"])  # all is currently just bk and dk
     parser.add_argument("--downstream_loss", type=str, default="mae", choices=["corr", "mae", "mse"])
-    parser.add_argument("--pretrain_fooof", type=bool, default=False)
+    parser.add_argument("--pretrain_fooof", type=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--ap_loss_factor", type=float, default=0.5)  # how much periodic and aperiodic losses are weighted
     parser.add_argument("--fooof_loss_factor", type=float, default=0.1)  # how much fooof and spectrogram losses are weighted
     parser.add_argument("--warm_up_epochs_before_fooof", type=int, default=30)
-    parser.add_argument("--apply_log_scaling", type=bool, default=True)
-    parser.add_argument("--add_hour_to_embedding", type=bool, default=False)
-    parser.add_argument("--add_hour_to_features", type=bool, default=False)
-    parser.add_argument("--load_pretrained", type=bool, default=True)
-    parser.add_argument("--use_rotary_encoding", type=bool, default=False)
+    parser.add_argument("--apply_log_scaling", type=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--add_hour_to_embedding", type=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--add_hour_to_features", type=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--load_pretrained", type=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--use_rotary_encoding", type=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--num_cls_token", type=int, default=1)
     parser.add_argument("--time_ar_layer", type=int, default=2)  # 4
     parser.add_argument("--time_ar_head", type=int, default=4)  # 8
@@ -491,7 +495,7 @@ if __name__ == "__main__":
     parser.add_argument("--path_out", type=str, default="/Users/Timon/Documents/dbs_foundation_model/out_save_debug")
     parser.add_argument("--tb_name", type=str, default='fm')
     parser.add_argument("--sub_idx", type=int, default=6)  # 0
-    parser.add_argument("--multiprocess_on_one_machine", type=bool, default=False)
+    parser.add_argument("--multiprocess_on_one_machine", type=argparse.BooleanOptionalAction, default=False)
 
     args = parser.parse_args()
 
@@ -526,4 +530,4 @@ if __name__ == "__main__":
         for p in processes:
             p.join()
 
-        #save_res_combined(sub_unique, args)
+    save_res_combined(args)
