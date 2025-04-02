@@ -456,6 +456,17 @@ def save_res_combined(args):
         name_ = f"results_{ml_task}.csv"
         df.to_csv(os.path.join(args.path_out, name_), index=False)
 
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('true', '1', 'yes', 'y'):
+        return True
+    elif v.lower() in ('false', '0', 'no', 'n'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
 if __name__ == "__main__":
 
     np.random.seed(1)
@@ -478,15 +489,15 @@ if __name__ == "__main__":
     parser.add_argument("--pretrain_loss", type=str, default="mae", choices=["mse", "mae"])
     parser.add_argument("--downstream_label", type=str, default="all", choices=["pkg_bk", "pkg_dk", "pkg_tremor", "all"])  # all is currently just bk and dk
     parser.add_argument("--downstream_loss", type=str, default="mae", choices=["corr", "mae", "mse"])
-    parser.add_argument("--pretrain_fooof", type=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--pretrain_fooof", type=str2bool, default=False)
     parser.add_argument("--ap_loss_factor", type=float, default=0.5)  # how much periodic and aperiodic losses are weighted
     parser.add_argument("--fooof_loss_factor", type=float, default=0.1)  # how much fooof and spectrogram losses are weighted
     parser.add_argument("--warm_up_epochs_before_fooof", type=int, default=30)
-    parser.add_argument("--apply_log_scaling", type=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--add_hour_to_embedding", type=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--add_hour_to_features", type=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--load_pretrained", type=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--use_rotary_encoding", type=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--apply_log_scaling", type=str2bool, default=True)
+    parser.add_argument("--add_hour_to_embedding", type=str2bool, default=False)
+    parser.add_argument("--add_hour_to_features", type=str2bool, default=False)
+    parser.add_argument("--load_pretrained", type=str2bool, default=True)
+    parser.add_argument("--use_rotary_encoding", type=str2bool, default=False)
     parser.add_argument("--num_cls_token", type=int, default=1)
     parser.add_argument("--time_ar_layer", type=int, default=2)  # 4
     parser.add_argument("--time_ar_head", type=int, default=4)  # 8
@@ -495,7 +506,7 @@ if __name__ == "__main__":
     parser.add_argument("--path_out", type=str, default="/Users/Timon/Documents/dbs_foundation_model/out_save_debug")
     parser.add_argument("--tb_name", type=str, default='fm')
     parser.add_argument("--sub_idx", type=int, default=6)  # 0
-    parser.add_argument("--multiprocess_on_one_machine", type=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--multiprocess_on_one_machine", type=str2bool, default=False)
 
     args = parser.parse_args()
 
