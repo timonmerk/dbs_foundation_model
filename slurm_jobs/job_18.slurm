@@ -8,7 +8,7 @@
 #SBATCH -e logs/train_log_18_%a.err
 
 uv run train.py --sub_idx $SLURM_ARRAY_TASK_ID --pretrain_loss mae --lr 0.1 --num_epochs 100 \
-    --d_model 16 --dim_feedforward 8 --patience 7 \
+    --d_model 8 --dim_feedforward 64 --patience 7 \
     --use_rotary_encoding False --apply_log_scaling False \
     --add_hour_to_features True \
     --PATH_DATA /data/cephfs-1/home/users/merkt_c/work/dbs_foundation_model/data \
