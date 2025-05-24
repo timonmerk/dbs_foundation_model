@@ -181,6 +181,7 @@ embs/*
 out_save/*
 out_*
 data/*
+big_corr/*
 logs/
 joint_df.csv
 out*
